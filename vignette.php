@@ -3,34 +3,35 @@
 /* générateur automatique de vignettes en ligne                                 */
 /* gère les formats JPEG, PNG et GIF, préserve le cannal alpha des PNG          */
 /*                                                                              */
-/* copyright Daniel MIHALCEA (c) 2011 http://mihalcea.fr/                       */
+/* copyright Daniel MIHALCEA (c) 2011-2020 http://mihalcea.fr/                  */
 /*                                                                              */
-/* @param   {File}   f: fichier pointant vers l'image source ou URL             */
+/* @param   {File}   f: fichier pointant vers l'image source ou URL, peut être  */
+/*                   une URL si allow_url_fopen est activé dans php.ini         */
 /* @param   {Number} [h=128]: taille de la vignette, 128 pixels par défaut      */
 /* @param   {Bool}   [r=0]: si les vignettes doivent êtres carrées ou non       */
 /* @returns {Image}  vignette de l'image                                        */
 /*                                                                              */
 /********************************************************************************/
 
-$f = ( (isset($_GET['f'])) ? $_GET['f'] : '' ); // on récupère le nom du fichier
-$h = (int) ( (isset($_GET['h'])) ? $_GET['h'] : '128' ); // on récupère la hauteur
-$r = (bool) ( (isset($_GET['r'])) ? $_GET['r'] : '0' ); // doit-on générer une vignette carrée ?
+$f = $_GET['f'] ?? ''; // on récupère le nom du fichier s'il existe
+$h = (int) ( $_GET['h'] ?? '128' ); // on récupère la hauteur, 128 pixels si non défini
+$r = (bool) ( $_GET['r'] ?? '0' ); // doit-on générer une vignette carrée ? Par défaut non
 
-if ($f{0} == '/') $f = $_SERVER['DOCUMENT_ROOT'].$f; // si le chemin est lié à la racine, on prends la racine du serveur
-if (!is_numeric ($h) || $h<1) $h = 128; // si la dimention est incorrecte on prends la dimention par défaut
+if ($f{0} == '/') $f = $_SERVER['DOCUMENT_ROOT'].$f; // si le chemin est lié à la racine, on prends la racine du serveur HTTP
+if (!is_numeric ($h) || $h<1) $h = 128; // si la dimension est incorrecte/invalide on prens la dimension par défaut
 
-function error($txt) {
+function error($txt) { // génère le message d'erreur en temps qu'image pour pouvoir le voir
     global $h, $im1;
     $im1 = ImageCreateTrueColor($h, $h);
     $blanc = imagecolorallocate($im1, 255, 255, 255);
-    imagestring($im1, 2, 2, 0, $txt, $blanc);
+    imagestring($im1, 2, 2, 0, utf8_decode($txt), $blanc);
     finalise();
     exit;
 }
 
-function finalise() {
+function finalise() { // finalise l'image : la génère selon le format initial
     global $ext, $im1;
-    switch ($ext) { // on génère l'image finale selon le format
+    switch ($ext) {
         case 'jpg' :
         case 'jpeg' : 
             imagejpeg($im1);
@@ -39,15 +40,14 @@ function finalise() {
             imagegif($im1);
             break;
         case 'png' :
-        default :
+        default : // format PNG par défaut
             imagepng($im1);
             break;
     }
     imagedestroy($im1);
 }
 
-
-if (!is_file($f) && strtolower(substr($f, 0, 7)!='http://')) { // si le fichier n'existe pas, on affiche un message et on quitte
+if (!is_file($f) && strtolower(substr($f, 0, 7)!='http://') && strtolower(substr($f, 0, 8)!='https://')) { // si le fichier n'existe pas sur le serveur et n'est pas une URL, on affiche un message et on quitte
     header('Content-Type: image/png');
     error('fichier introuvable');
 }
@@ -69,34 +69,28 @@ switch ($ext) { // on envoie l'entête correspondant et on récupère l'image
         break;
     default : // le type de l'image n'est pas supporté
         header('Content-Type: image/png');
-        $im0 = ImageCreateTrueColor($h, $h);
-        $blanc = imagecolorallocate($im0, 255, 255, 255);
-        $r = 'fichier non supporté';
-        imagestring($im0, 2, 2, 0, $r, $blanc);
-        imagepng($im0);
-        exit;
+        error('fichier non supporté');
 }
 
 if (!$im0) {
     error('erreur d\'access');
 }
 // on récupère les dimensions de l'image originale
-$h0 = ImageSY($im0);
-$l0 = ImageSX($im0);
+$h0 = ImageSY($im0); // hauteur
+$l0 = ImageSX($im0); // largeur
 
+$x = 0; $y = 0;
 if ($r == '1') { // si les vignettes sont carrées
-    $im1 = ImageCreateTrueColor($h, $h);
-    ImageAlphaBlending($im1, false);
-    imagesavealpha($im1, true);
     if ($h0 < $l0) { // si l'image est en mode paysage
         $h1 = $h;
         $l1 = floor($l0/$h0*$h1);
-        imagecopyresampled ($im1, $im0, ($h1-$l1)/2, 0, 0, 0, $l1, $h1, $l0, $h0);
+        $x = ($h1-$l1)/2;
     } else { // ou portrait
         $l1 = $h;
         $h1 = floor($h0/$l0*$l1);
-        imagecopyresampled ($im1, $im0, 0, ($l1-$h1)/2, 0, 0, $l1, $h1, $l0, $h0);
+        $y = ($l1-$h1)/2;
     }
+    $im1 = ImageCreateTrueColor($h, $h);
 } else { // ou sinon on respecte les proportions d'origine
     if ($h0 > $l0) { // si l'image est en mode portrait
         $h1 = $h;
@@ -106,10 +100,10 @@ if ($r == '1') { // si les vignettes sont carrées
         $h1 = floor($h0/$l0*$l1);
     }
     $im1 = ImageCreateTrueColor($l1, $h1);
-    ImageAlphaBlending($im1, false);
-    imagesavealpha($im1, true);
-    imagecopyresampled ($im1, $im0, 0, 0, 0, 0, $l1, $h1, $l0, $h0);
 }
-imagedestroy($im0);
+ImageAlphaBlending($im1, false); // doit être à false pour imagesavealpha
+imagesavealpha($im1, true); // permet de conserver le canal alpha
+$r = imagecopyresampled ($im1, $im0, $x, $y, 0, 0, $l1, $h1, $l0, $h0); // redimensionne l'image 
+imagedestroy($im0); // libère la mémoire de suite avant de générer l'image au format choisi
 finalise();
 ?>
